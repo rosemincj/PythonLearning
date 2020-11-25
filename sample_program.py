@@ -2,10 +2,10 @@ def call_palindrome_fun(user_str):
     str1 = ""
     for i in user_str:
         str1 = i + str1
-    # if user_str == str1:
-    return bool(user_str == str1)
-    # else:
-    # return 'It is not a palindrome'
+    if user_str == str1:
+        return 'Palindrome'
+    else:
+        return 'Not Palindrome'
 
 
 def call_substring_palindrome(user_str):
@@ -18,11 +18,11 @@ def call_substring_palindrome(user_str):
     for i in x:
         sample_dict[i] = call_palindrome_fun(i)
     # return sample_dict
-    y = []
-    #for i in sample_dict[i]:
-    if sample_dict[i]:
-        y.append(sample_dict[i])
-    return y
+    list = []
+    for key in sample_dict.keys():
+        if sample_dict[key] == str('Palindrome'):
+            list.append(key)
+    return list
 
 
 def call_occurrence_fun(user_str):
