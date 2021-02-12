@@ -1,0 +1,219 @@
+# Scrape linkedin data using Mantheos and create vault profile(US)
+
+
+# Search via Linkedin URL
+ class ProfileUrlSearchViewSet(viewsets.ModelViewSet):
+    authentication_classes = [
+        NetlifyRemoteUserWithBasicAuthentication
+    ] + AUTHENTICATION_CLASSES
+    permission_classes = (IsAuthenticated,)
+
+    def create(self, request):
+        profile_url = request
+        token = settings.MANTHEOS_TOKEN
+        headers = {
+            "Authorization": "Token " + token,
+            "Content-Type": "application/json"
+        }
+        url = "https://www.mantheos.com/api/v2/profiles/linkedin-url/"
+        data = {
+            "linkedin_profile_url": profile_url,
+        }
+        response = requests.post(url, headers=headers, json=data)
+
+        if response.status_code == 200:
+            response = response.json().get("request", {})
+            profile = response.get("profile", {})
+        person = form_vault_person(profile=profile, user=user)
+        return person
+
+
+# Search via field parameters
+class FieldSearchViewSet(viewsets.ModelViewSet):
+    authentication_classes = [
+        NetlifyRemoteUserWithBasicAuthentication
+    ] + AUTHENTICATION_CLASSES
+    permission_classes = (IsAuthenticated,)
+
+    def create(self, request):
+        profile_data = []
+        people_data = request.data
+        for data in people_data:
+            first_name = data.get("first_name")
+            last_name = data.get("last_name")
+            if first_name and last_name:
+                title = data.get("title")
+                org_name = data.get("org_name")
+
+                filters = {
+                    "keywords_str": first_name + " " + last_name,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "locations_included": [],
+                    "companies_included": [org_name] if org_name else [],
+                    "companies_included_type": [],
+                    "titles_included": [title] if title else [],
+                    "titles_included_type": [],
+                    "companysizes_included": [],
+                    "industries_included": [],
+                    "senioritylevels_included": [],
+                    "jobfunctions_included": [],
+                    "start": 0,
+                    "count": 1
+                }
+
+                token = settings.MANTHEOS_TOKEN
+                headers = {
+                    "Authorization": "Token " + token,
+                    "Content-Type": "application/json"
+                }
+                url = "https://www.mantheos.com/api/v2/profiles/search/"
+                response = requests.post(url, headers=headers, json=filters)
+
+                if response.status_code == 200:
+                    response = response.json().get("request", {})
+                    get_request_url = response.get("get_request_url")
+                    request_data_in = float(response.get("request_data_in"))
+                    time.sleep(request_data_in)
+                    profile = get_profile_from_mantheos(get_request_url)
+                    if profile:
+                        profile_data.append(profile)
+
+        for profile in profile_data:
+            person = form_vault_person(profile=profile, user=user, filtered_search=True)
+        return person
+
+
+def get_profile_from_mantheos(get_request_url):
+    url = get_request_url
+    token = settings.MANTHEOS_TOKEN
+    headers = {
+        "Authorization": "Token " + token,
+        "Content-Type": "application/json"
+    }
+    response = requests.get(url, headers=headers)
+    profile = {}
+    if response.status_code == 200:
+        profiles = response.json().get("results", {}).get("profiles", [])
+        profile = profiles[0] if profiles else {}
+    return profile
+
+
+def form_vault_person(profile, user, profile_url=None, filtered_search=True):
+    person = {}
+    try:
+        location = profile.get("location", "")
+        # Create vault profile only for people in US
+        if profile and location.split(",")[-1].strip().lower() == "united states":
+            b2b_id = models.VAULT_EDITOR_PERSON_ID_TAG + uuid.uuid1().hex
+            person["id"] = b2b_id
+            person["b2b_id"] = b2b_id
+            person["b2b"] = True
+            person["b2c"] = False
+            first_name = profile.get("first_name")
+            last_name = profile.get("last_name")
+            person["first_name"] = first_name
+            person["last_name"] = last_name
+            if first_name and last_name:
+                person["full_name"] = first_name + " " + last_name
+            try:
+                location_list = location.split(",")
+                location_state = None
+                location_city = None
+                if len(location_list) == 2:
+                    location_state = state_norm.get(location_list[0].strip().lower())
+                elif len(location_list) == 3:
+                    location_city = location_list[0].strip().title()
+                    location_state = state_norm.get(location_list[1].strip().lower())
+                if location_city:
+                    person["location_city"] = location_city
+                if location_state:
+                    person["location_state"] = location_state
+            except Exception:
+                pass
+            if profile.get("industry"):
+                person["industry"] = profile.get("industry").lower()
+            if profile.get("skills"):
+                person["skills"] = [skill.lower() for skill in profile.get("skills")]
+            if profile.get("emails"):
+                person["emails"] = [
+                    item.get("emailAddress") for item in profile.get("emails")
+                ]				
+	    norm_linkedin_url = profile.get("linkedin_profile_url", profile_url)
+            norm_linkedin_url = re.sub(
+                r"^(?:https?://)?(?:www\.)?(.*?)/?$", r"\1", norm_linkedin_url
+            )
+            person["norm_linkedin_urls"] = [norm_linkedin_url]
+            social_accounts = []
+            # Add linkedin url to social_handles
+            try:
+                social_accounts.append(
+                    {
+                        "network": "linkedin",
+                        # standard format- http://www.<handle>
+                        "url": "http://www." + norm_linkedin_url,
+                        "username": norm_linkedin_url.split("/")[2],
+                    }
+                )
+            except IndexError:
+                pass
+            if profile.get("social_accounts"):
+                for item in profile.get("social_accounts"):
+                    if item.get("type") and item.get("name"):
+                        social_network = item.get("type").lower()
+                        social_username = item.get("name")
+                        social_url = (
+                            f"http://www.{social_network}.com/{social_username}"
+                        )
+                        social_accounts.append(
+                            {
+                                "network": social_network,
+                                "url": social_url,
+                                "username": social_username,
+                            }
+                        )
+            if social_accounts:
+                person["social_handles"] = social_accounts
+            work_experience = profile.get("work_experiences")
+            if work_experience:
+                norm_experience = format_exp(work_experience)
+                person["norm_experience"] = norm_experience
+                current_experience = [
+                    exp for exp in norm_experience if not exp.get("end_date")
+                ]
+                person["current_experience"] = current_experience
+                if current_experience:
+                    if current_experience[0].get("title"):
+                        person["title"] = current_experience[0].get("title")
+                    if current_experience[0].get("org_name"):
+                        person["org_name"] = current_experience[0].get("org_name")
+                person["previous_experience"] = [
+                    exp for exp in norm_experience if exp.get("end_date")
+                ]
+            education = profile.get("education")
+            if education:
+                schools, education = format_education(education)
+                person["schools"] = schools
+                person["education"] = education
+            person["created"] = str(dt.date.today())
+            person["updated"] = str(dt.date.today())
+            models.ProfileDelta.objects.create(
+                owner=user,
+                linkedin_url=norm_linkedin_url,
+                b2b_id=b2b_id,
+                mantheos_response=profile,
+            )
+            models.VaultPersonDelta.create(
+                op=models.VaultPersonDelta.OP_INSERT,
+                vault_person_id=b2b_id,
+                doc=person,
+                owner=user,
+            )
+            indexes.PersonIndex().add(person)
+            if not filtered_search:
+                return person
+            return
+    except Exception:
+        if not filtered_search:
+            return {}
+        return
