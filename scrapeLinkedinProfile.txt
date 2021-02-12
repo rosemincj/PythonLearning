@@ -9,7 +9,7 @@
     permission_classes = (IsAuthenticated,)
 
     def create(self, request):
-        profile_url = request
+        profile_url = request.data
         token = settings.MANTHEOS_TOKEN
         headers = {
             "Authorization": "Token " + token,
